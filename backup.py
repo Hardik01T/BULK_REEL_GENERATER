@@ -1,60 +1,78 @@
-import subprocess
-import textwrap 
-import sys
+import textwrap
+from moviepy.editor import VideoFileClip, AudioFileClip, TextClip, CompositeVideoClip
 import os
+import gc
+from multiprocessing import Pool, cpu_count
 
-# Ensure console prints Unicode correctly (Windows)
-sys.stdout.reconfigure(encoding='utf-8')
-
-# Path setup
 background_video = "C:\\joke-reel-generator\\backgroud.mp4"
 music = "C:\\joke-reel-generator\\music.mp3"
-font_path = "C:/Windows/Fonts/arialuni.ttf"  # Use a Unicode-supporting font like Arial Unicode or Noto
+font_path = "C:/Windows/Fonts/arialuni.ttf"
 
-# Create output directory if not exists
-os.makedirs("output", exist_ok=True)
-
-# 10 Hindi captions
 captions = [
-    "KABHI HAAR MAT MAANO",
+    "KABHI HAAR MAT MAANO My name is Hardik and I am a boss of this universe, screw you boys.",
+    "Life is 10% what happens to us and 90% how we react to it.",
+    "Don’t wait for the opportunity. Create it!",
+    # Add more quotes...
 ]
 
-# Generate reels
-for i, text in enumerate(captions, 1):
-    output_file = f"output\\reel_{i}.mp4"
-
-    # Escape single quotes in text for ffmpeg
-    safe_text = text.replace("'", r"\'")
+def create_text_clip(text, font_path, max_width=800, font_size=60, padding=50):
+    wrapped_text = '\n'.join(textwrap.wrap(text, width=15))
     
-    # For text wrapping (text inside reel)
-    wrapped_text = '\n'.join(textwrap.wrap(text, width=15))  # Increased width for better visibility
-    escaped_text = wrapped_text.replace("'", r"\'").replace("\n", r'\n')
+    while True:
+        try:
+            text_clip = TextClip(
+                wrapped_text,
+                font=font_path,
+                fontsize=font_size,
+                color='white',
+                stroke_color='black',
+                stroke_width=2,
+                method='caption',
+                align='center'
+            )
+            if text_clip.size[0] <= max_width:
+                break
+            font_size -= 5
+        except Exception as e:
+            print(f"[X] TextClip creation error: {e}")
+            return None
 
-    # Control font style and animations
-    filter_str = (
-        f"[0:v]scale=1080:1920,"
-        f"drawtext=fontfile='{font_path}':text='{escaped_text}':"
-        f"fontcolor=white:fontsize=60:x=(w-text_w)/2:y=(h-text_h)/2:"
-        f"alpha='if(lt(t,1),0,if(lt(t,2),(t-1)/1,1))'[v]"
-    )
+    return text_clip.margin(left=padding, right=padding, opacity=0).set_position(('center', 'bottom')).set_duration(15)
 
-    # Final FFmpeg command
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", background_video,
-        "-i", music,
-        "-filter_complex", filter_str,
-        "-map", "[v]",
-        "-map", "1:a",
-        "-shortest",
-        "-c:v", "libx264",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        output_file
-    ]
+def generate_reel(args):
+    i, text = args
+    output_file = f"output/reel_{i}.mp4"
+    final_clip = None
 
     try:
-        subprocess.run(cmd, check=True)
-        print(f"✅ Created: {output_file}")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to create {output_file}\n{e}")
+        video = VideoFileClip(background_video).resize(height=720)  # lower height for memory optimization
+        audio = AudioFileClip(music)
+        text_clip = create_text_clip(text, font_path)
+
+        if text_clip is None:
+            raise Exception("TextClip generation failed")
+
+        final_clip = CompositeVideoClip([video, text_clip])
+        final_clip = final_clip.set_audio(audio).set_duration(video.duration)
+
+        final_clip.write_videofile(output_file, codec='libx264', audio_codec='aac', fps=24)
+        print(f"[✓] Created: {output_file}")
+
+    except Exception as e:
+        print(f"[X] Failed to create {output_file} – {e}")
+
+    finally:
+        if final_clip:
+            final_clip.close()
+        if 'video' in locals():
+            video.close()
+        if 'audio' in locals():
+            audio.close()
+        if 'text_clip' in locals() and text_clip:
+            text_clip.close()
+        gc.collect()
+
+if __name__ == "__main__":
+    os.makedirs("output", exist_ok=True)
+    with Pool(processes=min(cpu_count(), 2)) as pool:  # Use only 2 cores to avoid memory overflow
+        pool.map(generate_reel, list(enumerate(captions, 1)))
