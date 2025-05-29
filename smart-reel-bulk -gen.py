@@ -92,3 +92,4 @@ for i, quote in enumerate(quotes):
     final.write_videofile(output_path, codec='libx264', audio_codec='aac', fps=30)
 
     print(f"Saved: {output_path}")
+#commewnt to add
